@@ -1,6 +1,7 @@
 use crate::ArrayBuffer;
 use crate::Context;
 use crate::Exception;
+use crate::Global;
 use crate::HandleScope;
 use crate::Isolate;
 use crate::Local;
@@ -32,8 +33,10 @@ pub unsafe extern "C" fn v8__ValueDeserializer__Delegate__ReadHostObject(
   _isolate: *mut Isolate,
 ) -> *const Object {
   let value_deserializer_heap = ValueDeserializerHeap::dispatch_mut(this);
-  let scope =
-    &mut crate::scope::CallbackScope::new(value_deserializer_heap.context);
+  let scope = &mut HandleScope::with_context(
+    _isolate.as_mut().unwrap(),
+    value_deserializer_heap.context.clone(),
+  );
   let value_deserializer_impl =
     value_deserializer_heap.value_deserializer_impl.as_mut();
   match value_deserializer_impl.read_host_object(
@@ -52,8 +55,11 @@ pub unsafe extern "C" fn v8__ValueDeserializer__Delegate__GetSharedArrayBufferFr
   transfer_id: u32,
 ) -> *const SharedArrayBuffer {
   let value_deserializer_heap = ValueDeserializerHeap::dispatch_mut(this);
-  let scope =
-    &mut crate::scope::CallbackScope::new(value_deserializer_heap.context);
+  let scope = &mut HandleScope::with_context(
+    _isolate.as_mut().unwrap(),
+    value_deserializer_heap.context.clone(),
+  );
+
   let value_deserializer_impl =
     value_deserializer_heap.value_deserializer_impl.as_mut();
   match value_deserializer_impl
@@ -71,8 +77,11 @@ pub unsafe extern "C" fn v8__ValueDeserializer__Delegate__GetWasmModuleFromId(
   clone_id: u32,
 ) -> *const WasmModuleObject {
   let value_deserializer_heap = ValueDeserializerHeap::dispatch_mut(this);
-  let scope =
-    &mut crate::scope::CallbackScope::new(value_deserializer_heap.context);
+  let scope = &mut HandleScope::with_context(
+    _isolate.as_mut().unwrap(),
+    value_deserializer_heap.context.clone(),
+  );
+
   let value_deserializer_impl =
     value_deserializer_heap.value_deserializer_impl.as_mut();
   match value_deserializer_impl.get_wasm_module_from_id(scope, clone_id) {
@@ -146,6 +155,11 @@ extern "C" {
     length: usize,
     data: *mut *const c_void,
   ) -> bool;
+
+  fn v8__ValueDeserializer__GetWireFormatVersion(
+    this: *mut CxxValueDeserializer,
+  ) -> u32;
+
 }
 
 /// The ValueDeserializerImpl trait allows for
@@ -202,14 +216,14 @@ pub trait ValueDeserializerImpl {
 /// callback to fail. Additionally the deserializer and implementation are also
 /// pinned in memory because these have to be accessable from within the
 /// delegate callback methods.
-pub struct ValueDeserializerHeap<'a, 's> {
+pub struct ValueDeserializerHeap<'a> {
   value_deserializer_impl: Box<dyn ValueDeserializerImpl + 'a>,
   cxx_value_deserializer: CxxValueDeserializer,
   cxx_value_deserializer_delegate: CxxValueDeserializerDelegate,
-  context: Local<'s, Context>,
+  context: Global<Context>,
 }
 
-impl<'a, 's> ValueDeserializerHeap<'a, 's> {
+impl<'a> ValueDeserializerHeap<'a> {
   fn get_cxx_value_deserializer_delegate_offset(
   ) -> FieldOffset<CxxValueDeserializerDelegate> {
     let buf = std::mem::MaybeUninit::<Self>::uninit();
@@ -221,7 +235,7 @@ impl<'a, 's> ValueDeserializerHeap<'a, 's> {
   /// Starting from 'this' pointer a ValueDeserializerHeap ref can be created
   #[allow(dead_code)]
   pub unsafe fn dispatch(
-    value_serializer_delegate: &'s CxxValueDeserializerDelegate,
+    value_serializer_delegate: &CxxValueDeserializerDelegate,
   ) -> &Self {
     Self::get_cxx_value_deserializer_delegate_offset()
       .to_embedder::<Self>(value_serializer_delegate)
@@ -230,14 +244,14 @@ impl<'a, 's> ValueDeserializerHeap<'a, 's> {
   /// Starting from 'this' pointer the ValueDeserializerHeap mut ref can be
   /// created
   pub unsafe fn dispatch_mut(
-    value_serializer_delegate: &'s mut CxxValueDeserializerDelegate,
+    value_serializer_delegate: &mut CxxValueDeserializerDelegate,
   ) -> &mut Self {
     Self::get_cxx_value_deserializer_delegate_offset()
       .to_embedder_mut::<Self>(value_serializer_delegate)
   }
 }
 
-impl<'a, 's> Drop for ValueDeserializerHeap<'a, 's> {
+impl<'a> Drop for ValueDeserializerHeap<'a> {
   fn drop(&mut self) {
     unsafe {
       v8__ValueDeserializer__DESTRUCT(&mut self.cxx_value_deserializer)
@@ -338,13 +352,13 @@ impl ValueDeserializerHelper for CxxValueDeserializer {
   }
 }
 
-impl<'a, 's> ValueDeserializerHelper for ValueDeserializerHeap<'a, 's> {
+impl<'a> ValueDeserializerHelper for ValueDeserializerHeap<'a> {
   fn get_cxx_value_deserializer(&mut self) -> &mut CxxValueDeserializer {
     &mut self.cxx_value_deserializer
   }
 }
 
-impl<'a, 's> ValueDeserializerHelper for ValueDeserializer<'a, 's> {
+impl<'a> ValueDeserializerHelper for ValueDeserializer<'a> {
   fn get_cxx_value_deserializer(&mut self) -> &mut CxxValueDeserializer {
     &mut self.value_deserializer_heap.cxx_value_deserializer
   }
@@ -355,16 +369,27 @@ impl<'a, 's> ValueDeserializerHelper for ValueDeserializer<'a, 's> {
 /// The 'a lifetime is the lifetime of the ValueDeserializerImpl implementation.
 /// The 's lifetime is the lifetime of the HandleScope which is used to retrieve
 /// a Local<'s, Context> for the CallbackScopes
-pub struct ValueDeserializer<'a, 's> {
-  value_deserializer_heap: Pin<Box<ValueDeserializerHeap<'a, 's>>>,
+pub struct ValueDeserializer<'a> {
+  value_deserializer_heap: Pin<Box<ValueDeserializerHeap<'a>>>,
 }
 
-impl<'a, 's> ValueDeserializer<'a, 's> {
+impl<'a> ValueDeserializer<'a> {
   pub fn new<D: ValueDeserializerImpl + 'a>(
-    scope: &mut HandleScope<'s>,
+    scope: &mut HandleScope,
     value_deserializer_impl: Box<D>,
     data: &[u8],
   ) -> Self {
+    Self::new_raw(scope, value_deserializer_impl, data.as_ptr(), data.len())
+  }
+
+  pub fn new_raw<D: ValueDeserializerImpl + 'a>(
+    scope: &mut HandleScope,
+    value_deserializer_impl: Box<D>,
+    data_ptr: *const u8,
+    data_len: usize,
+  ) -> Self {
+    let ctx = scope.get_current_context();
+
     // create dummy ValueDeserializerHeap and move to heap + pin to address
     let mut value_deserializer_heap = Box::pin(ValueDeserializerHeap {
       value_deserializer_impl,
@@ -374,7 +399,7 @@ impl<'a, 's> ValueDeserializer<'a, 's> {
       cxx_value_deserializer_delegate: CxxValueDeserializerDelegate {
         _cxx_vtable: CxxVTable(std::ptr::null()),
       },
-      context: scope.get_current_context(),
+      context: Global::new(scope, ctx),
     });
 
     unsafe {
@@ -389,8 +414,8 @@ impl<'a, 's> ValueDeserializer<'a, 's> {
           as *mut CxxValueDeserializer
           as *mut std::mem::MaybeUninit<CxxValueDeserializer>,
         scope.get_isolate_ptr(),
-        data.as_ptr(),
-        data.len(),
+        data_ptr,
+        data_len,
         &mut value_deserializer_heap.cxx_value_deserializer_delegate,
       );
     };
@@ -401,7 +426,7 @@ impl<'a, 's> ValueDeserializer<'a, 's> {
   }
 }
 
-impl<'a, 's> ValueDeserializer<'a, 's> {
+impl<'a> ValueDeserializer<'a> {
   pub fn set_supports_legacy_wire_format(
     &mut self,
     supports_legacy_wire_format: bool,
@@ -411,6 +436,14 @@ impl<'a, 's> ValueDeserializer<'a, 's> {
         &mut self.value_deserializer_heap.cxx_value_deserializer,
         supports_legacy_wire_format,
       );
+    }
+  }
+
+  pub fn get_wire_format_version(&mut self) -> u32 {
+    unsafe {
+      v8__ValueDeserializer__GetWireFormatVersion(
+        &mut self.value_deserializer_heap.cxx_value_deserializer,
+      )
     }
   }
 
