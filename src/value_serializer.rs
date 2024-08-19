@@ -1,5 +1,4 @@
 use crate::ArrayBuffer;
-use crate::CallbackScope;
 use crate::Context;
 use crate::Exception;
 use crate::Global;
@@ -39,10 +38,13 @@ pub unsafe extern "C" fn v8__ValueSerializer__Delegate__ThrowDataCloneError(
   message: Local<String>,
 ) {
   let value_serializer_heap = ValueSerializerHeap::dispatch_mut(this);
-  let scope = &mut HandleScope::with_context(
-    _value_serializer_heap.isolate.as_mut().unwrap(),
-    value_serializer_heap.context.clone(),
+  let hs = &mut crate::scope::HandleScope::new(
+    value_serializer_heap.isolate.as_mut().unwrap(),
   );
+  let scope = &mut crate::scope::CallbackScope::new(Local::new(
+    hs,
+    value_serializer_heap.context.clone(),
+  ));
   value_serializer_heap
     .value_serializer_impl
     .as_mut()
@@ -68,11 +70,7 @@ pub unsafe extern "C" fn v8__ValueSerializer__Delegate__IsHostObject(
   object: Local<Object>,
 ) -> MaybeBool {
   let value_serializer_heap = ValueSerializerHeap::dispatch_mut(this);
-  // let scope = &mut HandleScope::with_context(
-  //   _isolate.as_mut().unwrap(),
-  //   value_serializer_heap.context.clone(),
-  // );
-  let scope = &mut CallbackScope::new(_isolate.as_mut().unwrap());
+  let scope = &mut crate::scope::CallbackScope::new(object);
   let value_serializer_impl =
     value_serializer_heap.value_serializer_impl.as_mut();
   MaybeBool::from(value_serializer_impl.is_host_object(scope, object))
@@ -85,11 +83,7 @@ pub unsafe extern "C" fn v8__ValueSerializer__Delegate__WriteHostObject(
   object: Local<Object>,
 ) -> MaybeBool {
   let value_serializer_heap = ValueSerializerHeap::dispatch_mut(this);
-  let scope = &mut HandleScope::with_context(
-    _isolate.as_mut().unwrap(),
-    value_serializer_heap.context.clone(),
-  );
-
+  let scope = &mut crate::scope::CallbackScope::new(object);
   let value_serializer_impl =
     value_serializer_heap.value_serializer_impl.as_mut();
   MaybeBool::from(value_serializer_impl.write_host_object(
@@ -107,10 +101,7 @@ pub unsafe extern "C" fn v8__ValueSerializer__Delegate__GetSharedArrayBufferId(
   clone_id: *mut u32,
 ) -> bool {
   let value_serializer_heap = ValueSerializerHeap::dispatch_mut(this);
-  let scope = &mut HandleScope::with_context(
-    _isolate.as_mut().unwrap(),
-    value_serializer_heap.context.clone(),
-  );
+  let scope = &mut crate::scope::CallbackScope::new(shared_array_buffer);
   match value_serializer_heap
     .value_serializer_impl
     .as_mut()
@@ -132,10 +123,7 @@ pub unsafe extern "C" fn v8__ValueSerializer__Delegate__GetWasmModuleTransferId(
   transfer_id: *mut u32,
 ) -> bool {
   let value_serializer_heap = ValueSerializerHeap::dispatch_mut(this);
-  let scope = &mut HandleScope::with_context(
-    _isolate.as_mut().unwrap(),
-    value_serializer_heap.context.clone(),
-  );
+  let scope = &mut crate::scope::CallbackScope::new(module);
   match value_serializer_heap
     .value_serializer_impl
     .as_mut()

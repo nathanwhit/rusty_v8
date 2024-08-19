@@ -1,5 +1,7 @@
 use crate::ArrayBuffer;
+use crate::CallbackScope;
 use crate::Context;
+use crate::ContextScope;
 use crate::Exception;
 use crate::Global;
 use crate::HandleScope;
@@ -33,14 +35,13 @@ pub unsafe extern "C" fn v8__ValueDeserializer__Delegate__ReadHostObject(
   _isolate: *mut Isolate,
 ) -> *const Object {
   let value_deserializer_heap = ValueDeserializerHeap::dispatch_mut(this);
-  let scope = &mut HandleScope::with_context(
-    _isolate.as_mut().unwrap(),
-    value_deserializer_heap.context.clone(),
-  );
+  let mut scope = CallbackScope::new(_isolate.as_mut().unwrap());
+  let context = Local::new(&mut scope, value_deserializer_heap.context.clone());
+  let mut scope = ContextScope::new(&mut scope, context);
   let value_deserializer_impl =
     value_deserializer_heap.value_deserializer_impl.as_mut();
   match value_deserializer_impl.read_host_object(
-    scope,
+    &mut scope,
     &mut value_deserializer_heap.cxx_value_deserializer,
   ) {
     None => std::ptr::null(),
@@ -55,10 +56,9 @@ pub unsafe extern "C" fn v8__ValueDeserializer__Delegate__GetSharedArrayBufferFr
   transfer_id: u32,
 ) -> *const SharedArrayBuffer {
   let value_deserializer_heap = ValueDeserializerHeap::dispatch_mut(this);
-  let scope = &mut HandleScope::with_context(
-    _isolate.as_mut().unwrap(),
-    value_deserializer_heap.context.clone(),
-  );
+  let mut scope = CallbackScope::new(_isolate.as_mut().unwrap());
+  let context = Local::new(&mut scope, value_deserializer_heap.context.clone());
+  let scope = &mut ContextScope::new(&mut scope, context);
 
   let value_deserializer_impl =
     value_deserializer_heap.value_deserializer_impl.as_mut();
@@ -77,10 +77,9 @@ pub unsafe extern "C" fn v8__ValueDeserializer__Delegate__GetWasmModuleFromId(
   clone_id: u32,
 ) -> *const WasmModuleObject {
   let value_deserializer_heap = ValueDeserializerHeap::dispatch_mut(this);
-  let scope = &mut HandleScope::with_context(
-    _isolate.as_mut().unwrap(),
-    value_deserializer_heap.context.clone(),
-  );
+  let mut scope = CallbackScope::new(_isolate.as_mut().unwrap());
+  let context = Local::new(&mut scope, value_deserializer_heap.context.clone());
+  let scope = &mut ContextScope::new(&mut scope, context);
 
   let value_deserializer_impl =
     value_deserializer_heap.value_deserializer_impl.as_mut();
@@ -263,7 +262,9 @@ impl<'a> Drop for ValueDeserializerHeap<'a> {
 /// Mostly used by the read_host_object callback function in the
 /// ValueDeserializerImpl trait to create custom deserialization logic.
 pub trait ValueDeserializerHelper {
-  fn get_cxx_value_deserializer(&mut self) -> &mut CxxValueDeserializer;
+  // XXX: This is safe but then the rest of the trait methods should
+  // be unsafe
+  fn get_cxx_value_deserializer(&mut self) -> *mut CxxValueDeserializer;
 
   fn read_header(&mut self, context: Local<Context>) -> Option<bool> {
     unsafe {
@@ -347,20 +348,35 @@ pub trait ValueDeserializerHelper {
 }
 
 impl ValueDeserializerHelper for CxxValueDeserializer {
-  fn get_cxx_value_deserializer(&mut self) -> &mut CxxValueDeserializer {
+  fn get_cxx_value_deserializer(&mut self) -> *mut CxxValueDeserializer {
     self
+  }
+}
+impl ValueDeserializerHelper for *mut CxxValueDeserializer {
+  fn get_cxx_value_deserializer(&mut self) -> *mut CxxValueDeserializer {
+    *self
   }
 }
 
 impl<'a> ValueDeserializerHelper for ValueDeserializerHeap<'a> {
-  fn get_cxx_value_deserializer(&mut self) -> &mut CxxValueDeserializer {
+  fn get_cxx_value_deserializer(&mut self) -> *mut CxxValueDeserializer {
     &mut self.cxx_value_deserializer
   }
 }
 
 impl<'a> ValueDeserializerHelper for ValueDeserializer<'a> {
-  fn get_cxx_value_deserializer(&mut self) -> &mut CxxValueDeserializer {
-    &mut self.value_deserializer_heap.cxx_value_deserializer
+  fn get_cxx_value_deserializer(&mut self) -> *mut CxxValueDeserializer {
+    std::ptr::addr_of_mut!(self.value_deserializer_heap.cxx_value_deserializer)
+  }
+}
+
+impl<'a> ValueDeserializerHelper for *mut ValueDeserializer<'a> {
+  fn get_cxx_value_deserializer(&mut self) -> *mut CxxValueDeserializer {
+    unsafe {
+      std::ptr::addr_of_mut!(
+        (**self).value_deserializer_heap.cxx_value_deserializer
+      )
+    }
   }
 }
 
@@ -437,6 +453,12 @@ impl<'a> ValueDeserializer<'a> {
         supports_legacy_wire_format,
       );
     }
+  }
+
+  pub unsafe fn get_wire_format_version_raw(
+    de: *mut CxxValueDeserializer,
+  ) -> u32 {
+    v8__ValueDeserializer__GetWireFormatVersion(de)
   }
 
   pub fn get_wire_format_version(&mut self) -> u32 {
