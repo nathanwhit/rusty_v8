@@ -1,5 +1,7 @@
 use crate::ArrayBuffer;
+use crate::CallbackScope;
 use crate::Context;
+use crate::ContextScope;
 use crate::Exception;
 use crate::Global;
 use crate::HandleScope;
@@ -38,17 +40,14 @@ pub unsafe extern "C" fn v8__ValueSerializer__Delegate__ThrowDataCloneError(
   message: Local<String>,
 ) {
   let value_serializer_heap = ValueSerializerHeap::dispatch_mut(this);
-  let hs = &mut crate::scope::HandleScope::new(
-    value_serializer_heap.isolate.as_mut().unwrap(),
-  );
-  let scope = &mut crate::scope::CallbackScope::new(Local::new(
-    hs,
-    value_serializer_heap.context.clone(),
-  ));
+  let mut scope =
+    CallbackScope::new(value_serializer_heap.isolate.as_mut().unwrap());
+  let context = Local::new(&mut scope, value_serializer_heap.context.clone());
+  let mut scope = ContextScope::new(&mut scope, context);
   value_serializer_heap
     .value_serializer_impl
     .as_mut()
-    .throw_data_clone_error(scope, message)
+    .throw_data_clone_error(&mut scope, message)
 }
 
 #[no_mangle]
