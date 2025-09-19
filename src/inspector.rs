@@ -694,6 +694,18 @@ impl<'a> From<&'a [u8]> for StringView<'a> {
   }
 }
 
+impl<'a> From<&'a str> for StringView<'a> {
+  fn from(v: &'a str) -> Self {
+    Self::U8(CharacterArray::<'a, u8>::from(v.as_bytes()))
+  }
+}
+
+impl<'a, const N: usize> From<&'a [u8; N]> for StringView<'a> {
+  fn from(v: &'a [u8; N]) -> Self {
+    Self::U8(CharacterArray::<'a, u8>::from(v.as_slice()))
+  }
+}
+
 impl<'a> From<&'a [u16]> for StringView<'a> {
   fn from(v: &'a [u16]) -> Self {
     Self::U16(CharacterArray::<'a, u16>::from(v))

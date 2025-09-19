@@ -1,0 +1,2 @@
+[env]
+V8_FROM_SOURCE = '1'
